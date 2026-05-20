@@ -54,7 +54,7 @@ app.use('/api/admin/login', loginLimiter);
 // Настройки CORS (для локальной разработки)
 const allowedOrigins = [
     'http://localhost:3000',
-    'http://127.0.0.1:3000',
+    'http://hzencorz-acu-fronend-e4bb.twc1.net',
     // В продакшене домен будет тот же, поэтому CORS не нужен,
     // но оставляем для локальной разработки
 ];
