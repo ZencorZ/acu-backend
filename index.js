@@ -4,25 +4,26 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';  // ← ИЗМЕНЕНО на bcryptjs
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 
-// Получаем текущую директорию (ES modules)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Загрузка переменных окружения
 dotenv.config();
 
 const app = express();
+
+// Доверие к прокси (для Timeweb)
+app.set('trust proxy', 1);
+
 const PORT = process.env.PORT || 3001;
-const HOST = '0.0.0.0'; // Слушаем все интерфейсы
+const HOST = '0.0.0.0';
 
 // ========== НАСТРОЙКИ БЕЗОПАСНОСТИ ==========
 
-// Helmet для защиты HTTP заголовков
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -35,7 +36,6 @@ app.use(helmet({
     },
 }));
 
-// Ограничение количества запросов
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
@@ -51,23 +51,8 @@ const loginLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/admin/login', loginLimiter);
 
-// Настройки CORS (для локальной разработки)
-const allowedOrigins = [
-    'http://localhost:3000',
-    'http://hzencorz-acu-fronend-e4bb.twc1.net',
-    // В продакшене домен будет тот же, поэтому CORS не нужен,
-    // но оставляем для локальной разработки
-];
-
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            // В продакшене запросы будут с того же домена, поэтому не блокируем
-            return callback(null, true);
-        }
-        return callback(null, true);
-    },
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY'],
@@ -82,12 +67,10 @@ const WHITELIST_SYNC_API_URL = 'https://whitelistsync.com/api';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
 
-// Пути к файлам данных (в папке server)
 const WHITELIST_FILE = path.join(__dirname, 'whitelist.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const RULES_FILE = path.join(__dirname, 'rules.json');
 
-// ========== MINECRAFT СЕРВЕР (для реального количества игроков) ==========
 const MINECRAFT_SERVER_IP = '78.109.129.242';
 const MINECRAFT_SERVER_PORT = '9028';
 
@@ -122,14 +105,13 @@ const DEFAULT_RULES = [
     { id: 12, section: 3, number: 4, title: "Администрация", description: "Решения администрации окончательны.", icon: "👑", order: 12 }
 ];
 
-// Хранение сессий админов
 let activeSessions = new Map();
 
 function generateToken() {
     return crypto.randomBytes(64).toString('hex');
 }
 
-// ========== ФУНКЦИИ ДЛЯ UUID ==========
+// ========== ФУНКЦИИ ==========
 
 function formatUuid(uuid) {
     if (!uuid) return uuid;
@@ -157,8 +139,6 @@ async function getUUIDFromMojang(username) {
     }
 }
 
-// ========== ФУНКЦИИ ДЛЯ WHITELIST SYNC ==========
-
 async function syncWithWhitelistSync(uuid, username, action = 'add') {
     if (!settings.whitelistSyncEnabled || !WHITELIST_SYNC_API_KEY) return { success: false };
 
@@ -180,8 +160,6 @@ async function syncWithWhitelistSync(uuid, username, action = 'add') {
         return { success: false };
     }
 }
-
-// ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ КОЛИЧЕСТВА ИГРОКОВ ==========
 
 async function getServerPlayers() {
     try {
@@ -209,8 +187,6 @@ async function getServerPlayers() {
         return { online: false, players: 0, maxPlayers: 0, error: "Ошибка подключения" };
     }
 }
-
-// ========== ФУНКЦИИ ДЛЯ ФАЙЛОВ ==========
 
 async function loadSettings() {
     try {
@@ -251,8 +227,6 @@ async function saveRules(rules) {
     } catch { return false; }
 }
 
-// ========== MIDDLEWARE ДЛЯ АДМИН-ПАНЕЛИ ==========
-
 const adminAuth = (req, res, next) => {
     const token = req.headers['authorization'];
     const session = activeSessions.get(token);
@@ -265,19 +239,21 @@ const adminAuth = (req, res, next) => {
 
 // ========== API ЭНДПОИНТЫ ==========
 
-// Логин
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
     if (username !== ADMIN_USERNAME) return res.status(401).json({ error: 'Неверный логин или пароль' });
 
-    const isValid = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    const isValid = bcrypt.compareSync(password, ADMIN_PASSWORD_HASH);
     if (!isValid) return res.status(401).json({ error: 'Неверный логин или пароль' });
 
     const newToken = generateToken();
     activeSessions.set(newToken, { createdAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
 
-    // Очистка старых сессий
     for (const [token, session] of activeSessions.entries()) {
         if (Date.now() > session.expiresAt) activeSessions.delete(token);
     }
@@ -285,15 +261,14 @@ app.post('/api/admin/login', async (req, res) => {
     res.json({ success: true, token: newToken });
 });
 
-// Выход
 app.post('/api/admin/logout', adminAuth, (req, res) => {
     const token = req.headers['authorization'];
     activeSessions.delete(token);
     res.json({ success: true });
 });
 
-// Настройки
 app.get('/api/admin/settings', adminAuth, async (req, res) => res.json(settings));
+
 app.post('/api/admin/settings', adminAuth, async (req, res) => {
     const { autoApproveEnabled, autoApproveRules, whitelistSyncEnabled, autoFetchUUID } = req.body;
     if (typeof autoApproveEnabled === 'boolean') settings.autoApproveEnabled = autoApproveEnabled;
@@ -304,13 +279,11 @@ app.post('/api/admin/settings', adminAuth, async (req, res) => {
     res.json({ success: true, settings });
 });
 
-// Статус сервера (реальное количество игроков)
 app.get('/api/server-status', async (req, res) => {
     const status = await getServerPlayers();
     res.json(status);
 });
 
-// Заявки
 app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
@@ -413,8 +386,6 @@ app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
-// ========== ЭНДПОИНТЫ ДЛЯ ПРАВИЛ ==========
-
 app.get('/api/rules', async (req, res) => {
     try {
         const rules = await getRules();
@@ -481,26 +452,7 @@ app.delete('/api/admin/rules/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
-// ========== РАЗДАЧА СТАТИКИ (FRONTEND) ==========
-// Эти строки позволяют серверу отдавать React-приложение
-
-// Путь к собранному фронтенду (папка client/dist относительно корня проекта)
-const distPath = path.join(__dirname, '..', 'client', 'dist');
-
-// Раздаём статические файлы (CSS, JS, изображения)
-app.use(express.static(distPath));
-
-// Все остальные запросы (не /api/*) отдаём index.html
-// Это нужно для работы React Router
-app.get('*', (req, res) => {
-    // Пропускаем API запросы (они уже обработаны выше)
-    if (req.path.startsWith('/api')) {
-        return next();
-    }
-    res.sendFile(path.join(distPath, 'index.html'));
-});
-
-// ========== ЗАПУСК СЕРВЕРА ==========
+// ========== ЗАПУСК ==========
 
 async function init() {
     await loadSettings();
@@ -510,8 +462,7 @@ async function init() {
     console.log(`🔐 Админ: ${ADMIN_USERNAME || 'admin'}`);
     console.log(`🔄 Whitelist Sync: ${settings.whitelistSyncEnabled ? 'ВКЛ' : 'ВЫК'}`);
     console.log(`🤖 Авто-одобрение: ${settings.autoApproveEnabled ? 'ВКЛ' : 'ВЫК'}`);
-    console.log(`🎮 Minecraft сервер: ${MINECRAFT_SERVER_IP}:${MINECRAFT_SERVER_PORT}`);
-    console.log(`📁 Статика из: ${distPath}\n`);
+    console.log(`🎮 Minecraft сервер: ${MINECRAFT_SERVER_IP}:${MINECRAFT_SERVER_PORT}\n`);
 }
 
 init();
