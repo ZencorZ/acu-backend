@@ -466,4 +466,3 @@ async function init() {
 }
 
 init();
-app.listen(PORT, HOST);
