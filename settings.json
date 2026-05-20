@@ -1,0 +1,11 @@
+{
+  "autoApproveEnabled": false,
+  "autoFetchUUID": true,
+  "autoApproveRules": {
+    "minUsernameLength": 3,
+    "requireReason": true,
+    "requireUUID": false
+  },
+  "whitelistSyncEnabled": true,
+  "lastUpdated": "2026-05-09T07:57:20.812Z"
+}
