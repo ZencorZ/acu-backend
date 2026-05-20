@@ -18,7 +18,7 @@ const app = express();
 
 // Доверие к прокси (для Timeweb)
 app.set('trust proxy', 1);
-process.env.PORT
+
 const PORT = process.env.PORT || 3001;
 const HOST = '0.0.0.0';
 
@@ -466,3 +466,4 @@ async function init() {
 }
 
 init();
+app.listen(PORT, HOST);
