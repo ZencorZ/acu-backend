@@ -47,8 +47,8 @@ const loginLimiter = rateLimit({
     message: { error: 'Слишком много попыток входа' },
 });
 
-app.use('/api/', limiter);
-app.use('/api/admin/login', loginLimiter);
+app.use('/', limiter);
+app.use('/admin/login', loginLimiter);
 
 // ========== НАСТРОЙКИ CORS (важно для разных серверов) ==========
 const allowedOrigins = [
@@ -279,7 +279,7 @@ app.get('/health', (req, res) => {
 
 // ========== API ЭНДПОИНТЫ ==========
 
-app.post('/api/admin/login', async (req, res) => {
+app.post('/admin/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
     if (username !== ADMIN_USERNAME) return res.status(401).json({ error: 'Неверный логин или пароль' });
@@ -297,15 +297,15 @@ app.post('/api/admin/login', async (req, res) => {
     res.json({ success: true, token: newToken });
 });
 
-app.post('/api/admin/logout', adminAuth, (req, res) => {
+app.post('/admin/logout', adminAuth, (req, res) => {
     const token = req.headers['authorization'];
     activeSessions.delete(token);
     res.json({ success: true });
 });
 
-app.get('/api/admin/settings', adminAuth, async (req, res) => res.json(settings));
+app.get('/admin/settings', adminAuth, async (req, res) => res.json(settings));
 
-app.post('/api/admin/settings', adminAuth, async (req, res) => {
+app.post('/admin/settings', adminAuth, async (req, res) => {
     const { autoApproveEnabled, autoApproveRules, whitelistSyncEnabled, autoFetchUUID } = req.body;
     if (typeof autoApproveEnabled === 'boolean') settings.autoApproveEnabled = autoApproveEnabled;
     if (typeof whitelistSyncEnabled === 'boolean') settings.whitelistSyncEnabled = whitelistSyncEnabled;
@@ -315,19 +315,19 @@ app.post('/api/admin/settings', adminAuth, async (req, res) => {
     res.json({ success: true, settings });
 });
 
-app.get('/api/server-status', async (req, res) => {
+app.get('/server-status', async (req, res) => {
     const status = await getServerPlayers();
     res.json(status);
 });
 
-app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
+app.get('/admin/whitelist', adminAuth, async (req, res) => {
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         res.json(JSON.parse(data));
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
-app.get('/api/user/my-applications', async (req, res) => {
+app.get('/user/my-applications', async (req, res) => {
     const userId = req.query.userId;
     if (!userId) {
         return res.status(400).json({ error: 'userId required' });
@@ -341,7 +341,7 @@ app.get('/api/user/my-applications', async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
-app.post('/api/whitelist', async (req, res) => {
+app.post('/whitelist', async (req, res) => {
     const { username, reason, createExperience, discordTag, userId } = req.body;
     
     if (!username || username.trim().length < 3) {
@@ -402,7 +402,7 @@ app.post('/api/whitelist', async (req, res) => {
     }
 });
 
-app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
+app.put('/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     
@@ -425,7 +425,7 @@ app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
 
-app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
+app.delete('/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
@@ -442,21 +442,21 @@ app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
-app.get('/api/rules', async (req, res) => {
+app.get('/rules', async (req, res) => {
     try {
         const rules = await getRules();
         res.json(rules.sort((a, b) => a.order - b.order));
     } catch { res.status(500).json({ error: 'Ошибка загрузки правил' }); }
 });
 
-app.get('/api/admin/rules', adminAuth, async (req, res) => {
+app.get('/admin/rules', adminAuth, async (req, res) => {
     try {
         const rules = await getRules();
         res.json(rules.sort((a, b) => a.order - b.order));
     } catch { res.status(500).json({ error: 'Ошибка загрузки правил' }); }
 });
 
-app.put('/api/admin/rules/:id', adminAuth, async (req, res) => {
+app.put('/admin/rules/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { title, description, icon, section, number } = req.body;
     
@@ -471,7 +471,7 @@ app.put('/api/admin/rules/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
 
-app.post('/api/admin/rules', adminAuth, async (req, res) => {
+app.post('/admin/rules', adminAuth, async (req, res) => {
     const { title, description, icon, section, number } = req.body;
     if (!title || !description) return res.status(400).json({ error: 'Название и описание обязательны' });
     
@@ -496,7 +496,7 @@ app.post('/api/admin/rules', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка добавления' }); }
 });
 
-app.delete('/api/admin/rules/:id', adminAuth, async (req, res) => {
+app.delete('/admin/rules/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     try {
         let rules = await getRules();
