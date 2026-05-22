@@ -17,7 +17,7 @@ dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const HOST = '0.0.0.0';
 
 // ========== НАСТРОЙКИ БЕЗОПАСНОСТИ ==========
@@ -124,21 +124,15 @@ function formatUuid(uuid) {
 async function getUUIDFromMojang(username) {
     if (!username || username.trim().length === 0) return null;
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    
     try {
         const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${username}`, {
-            headers: { 'User-Agent': 'AssociationCreateUnits/1.0' },
-            signal: controller.signal
+            headers: { 'User-Agent': 'AssociationCreateUnits/1.0' }
         });
-        clearTimeout(timeout);
         
         if (!response.ok) return null;
         const data = await response.json();
         return data.id ? formatUuid(data.id) : null;
     } catch (error) {
-        clearTimeout(timeout);
         console.error('Ошибка получения UUID:', error.message);
         return null;
     }
@@ -150,37 +144,25 @@ async function syncWithWhitelistSync(uuid, username, action = 'add') {
     const formattedUuid = formatUuid(uuid);
     const headers = { 'X-API-KEY': WHITELIST_SYNC_API_KEY, 'Content-Type': 'application/json' };
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    
     try {
         const url = `${WHITELIST_SYNC_API_URL}/whitelist${action === 'add' ? '' : '/' + formattedUuid}`;
         const response = await fetch(url, {
             method: action === 'add' ? 'POST' : 'DELETE',
             headers: headers,
-            body: action === 'add' ? JSON.stringify({ uuid: formattedUuid }) : undefined,
-            signal: controller.signal
+            body: action === 'add' ? JSON.stringify({ uuid: formattedUuid }) : undefined
         });
-        clearTimeout(timeout);
         
         if (!response.ok) console.error(`Ошибка Whitelist Sync: ${response.status}`);
         return { success: response.ok };
     } catch (error) {
-        clearTimeout(timeout);
         console.error('Ошибка Whitelist Sync:', error);
         return { success: false };
     }
 }
 
 async function getServerPlayers() {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    
     try {
-        const response = await fetch(`https://mcapi.us/server/status?ip=${MINECRAFT_SERVER_IP}&port=${MINECRAFT_SERVER_PORT}`, {
-            signal: controller.signal
-        });
-        clearTimeout(timeout);
+        const response = await fetch(`https://mcapi.us/server/status?ip=${MINECRAFT_SERVER_IP}&port=${MINECRAFT_SERVER_PORT}`);
         
         if (!response.ok) {
             return { online: false, players: 0, maxPlayers: 0, error: "API недоступно" };
@@ -200,7 +182,6 @@ async function getServerPlayers() {
             return { online: false, players: 0, maxPlayers: 0, error: "Сервер оффлайн" };
         }
     } catch (error) {
-        clearTimeout(timeout);
         console.error('Ошибка получения статуса сервера:', error.message);
         return { online: false, players: 0, maxPlayers: 0, error: "Ошибка подключения" };
     }
@@ -255,13 +236,13 @@ const adminAuth = (req, res, next) => {
     next();
 };
 
-// ========== HEALTHCHECK ДЛЯ БАЛАНСИРОВЩИКА TIMEWEB ==========
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', port: PORT, timestamp: new Date().toISOString() });
-});
-
 // ========== API ЭНДПОИНТЫ ==========
 
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Логин админа
 app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
@@ -303,6 +284,9 @@ app.get('/api/server-status', async (req, res) => {
     res.json(status);
 });
 
+// ========== ЗАЯВКИ (с привязкой к пользователю) ==========
+
+// Получение ВСЕХ заявок (только для админа)
 app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
@@ -310,6 +294,7 @@ app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
+// Получение заявок конкретного пользователя
 app.get('/api/user/my-applications', async (req, res) => {
     const userId = req.query.userId;
     if (!userId) {
@@ -324,6 +309,7 @@ app.get('/api/user/my-applications', async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
+// Отправка новой заявки
 app.post('/api/whitelist', async (req, res) => {
     const { username, reason, createExperience, discordTag, userId } = req.body;
     
@@ -344,6 +330,7 @@ app.post('/api/whitelist', async (req, res) => {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         let applications = JSON.parse(data);
         
+        // Проверка на существующую заявку с таким же ником от ЭТОГО пользователя
         const existing = applications.find(a => a.username.toLowerCase() === username.toLowerCase() && a.userId === userId);
         if (existing) {
             return res.status(400).json({ error: 'Вы уже отправляли заявку с этим ником' });
@@ -356,7 +343,7 @@ app.post('/api/whitelist', async (req, res) => {
         
         const newApplication = {
             id: Date.now(),
-            userId: userId,
+            userId: userId,  // ← КЛЮЧЕВОЕ ПОЛЕ для привязки
             username: username.trim(),
             uuid: playerUUID,
             reason: reason || '',
@@ -385,6 +372,7 @@ app.post('/api/whitelist', async (req, res) => {
     }
 });
 
+// Обновление статуса заявки (админ)
 app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -408,6 +396,7 @@ app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
 
+// Удаление заявки (админ)
 app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     try {
@@ -424,6 +413,8 @@ app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
         res.json({ success: true });
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
+
+// ========== ПРАВИЛА ==========
 
 app.get('/api/rules', async (req, res) => {
     try {
@@ -491,13 +482,6 @@ app.delete('/api/admin/rules/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
-// ========== ДИАГНОСТИКА ==========
-setInterval(() => {
-    const activeHandles = process._getActiveHandles().length;
-    const activeRequests = process._getActiveRequests().length;
-    console.log(`📊 Статус: handles: ${activeHandles}, requests: ${activeRequests}, порт: ${PORT}`);
-}, 30000);
-
 // ========== ЗАПУСК ==========
 
 async function init() {
@@ -508,16 +492,8 @@ async function init() {
     console.log(`🔐 Админ: ${ADMIN_USERNAME || 'admin'}`);
     console.log(`🔄 Whitelist Sync: ${settings.whitelistSyncEnabled ? 'ВКЛ' : 'ВЫК'}`);
     console.log(`🤖 Авто-одобрение: ${settings.autoApproveEnabled ? 'ВКЛ' : 'ВЫК'}`);
-    console.log(`🎮 Minecraft сервер: ${MINECRAFT_SERVER_IP}:${MINECRAFT_SERVER_PORT}`);
-    console.log(`🏥 Healthcheck: http://${HOST}:${PORT}/health\n`);
+    console.log(`🎮 Minecraft сервер: ${MINECRAFT_SERVER_IP}:${MINECRAFT_SERVER_PORT}\n`);
 }
 
 init();
-
-const server = app.listen(PORT, HOST, () => {
-    console.log(`✅ Сервер слушает на порту ${PORT}`);
-});
-
-// Критически важно для балансировщика Timeweb Cloud!
-server.keepAliveTimeout = 65000;      // 65 секунд
-server.headersTimeout = 66000;        // 66 секунд (должно быть больше keepAliveTimeout)
+app.listen(PORT, HOST);
