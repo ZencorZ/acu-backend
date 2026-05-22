@@ -51,7 +51,7 @@ app.use('/api/', limiter);
 app.use('/api/admin/login', loginLimiter);
 
 app.use(cors({
-    origin: true,
+    origin: 'localhost:3000',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY'],
