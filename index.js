@@ -4,25 +4,24 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 
-// Получаем текущую директорию (ES modules)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Загрузка переменных окружения
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-const HOST = '0.0.0.0'; // Слушаем все интерфейсы
+app.set('trust proxy', 1);
+
+const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0';
 
 // ========== НАСТРОЙКИ БЕЗОПАСНОСТИ ==========
 
-// Helmet для защиты HTTP заголовков
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -35,11 +34,11 @@ app.use(helmet({
     },
 }));
 
-// Ограничение количества запросов
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
     message: { error: 'Слишком много запросов' },
+    trustProxy: true,
 });
 
 const loginLimiter = rateLimit({
@@ -51,23 +50,8 @@ const loginLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/admin/login', loginLimiter);
 
-// Настройки CORS (для локальной разработки)
-const allowedOrigins = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    // В продакшене домен будет тот же, поэтому CORS не нужен,
-    // но оставляем для локальной разработки
-];
-
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            // В продакшене запросы будут с того же домена, поэтому не блокируем
-            return callback(null, true);
-        }
-        return callback(null, true);
-    },
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY'],
@@ -82,12 +66,10 @@ const WHITELIST_SYNC_API_URL = 'https://whitelistsync.com/api';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
 
-// Пути к файлам данных (в папке server)
 const WHITELIST_FILE = path.join(__dirname, 'whitelist.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const RULES_FILE = path.join(__dirname, 'rules.json');
 
-// ========== MINECRAFT СЕРВЕР (для реального количества игроков) ==========
 const MINECRAFT_SERVER_IP = '78.109.129.242';
 const MINECRAFT_SERVER_PORT = '9028';
 
@@ -122,77 +104,90 @@ const DEFAULT_RULES = [
     { id: 12, section: 3, number: 4, title: "Администрация", description: "Решения администрации окончательны.", icon: "👑", order: 12 }
 ];
 
-// Хранение сессий админов
 let activeSessions = new Map();
 
 function generateToken() {
     return crypto.randomBytes(64).toString('hex');
 }
 
-// ========== ФУНКЦИИ ДЛЯ UUID ==========
+// ========== ФУНКЦИИ ==========
 
 function formatUuid(uuid) {
     if (!uuid) return uuid;
     if (uuid.includes('-')) return uuid.toLowerCase();
     if (uuid.length === 32) {
-        return `${uuid.slice(0, 8)}-${uuid.slice(8, 12)}-${uuid.slice(12, 16)}-${uuid.slice(16, 20)}-${uuid.slice(20)}`.toLowerCase();
+        return `${uuid.slice(0,8)}-${uuid.slice(8,12)}-${uuid.slice(12,16)}-${uuid.slice(16,20)}-${uuid.slice(20)}`.toLowerCase();
     }
     return uuid;
 }
 
 async function getUUIDFromMojang(username) {
     if (!username || username.trim().length === 0) return null;
-
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
     try {
         const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${username}`, {
-            headers: { 'User-Agent': 'AssociationCreateUnits/1.0' }
+            headers: { 'User-Agent': 'AssociationCreateUnits/1.0' },
+            signal: controller.signal
         });
-
+        clearTimeout(timeout);
+        
         if (!response.ok) return null;
         const data = await response.json();
         return data.id ? formatUuid(data.id) : null;
     } catch (error) {
+        clearTimeout(timeout);
         console.error('Ошибка получения UUID:', error.message);
         return null;
     }
 }
 
-// ========== ФУНКЦИИ ДЛЯ WHITELIST SYNC ==========
-
 async function syncWithWhitelistSync(uuid, username, action = 'add') {
     if (!settings.whitelistSyncEnabled || !WHITELIST_SYNC_API_KEY) return { success: false };
-
+    
     const formattedUuid = formatUuid(uuid);
     const headers = { 'X-API-KEY': WHITELIST_SYNC_API_KEY, 'Content-Type': 'application/json' };
-
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    
     try {
         const url = `${WHITELIST_SYNC_API_URL}/whitelist${action === 'add' ? '' : '/' + formattedUuid}`;
         const response = await fetch(url, {
             method: action === 'add' ? 'POST' : 'DELETE',
             headers: headers,
-            body: action === 'add' ? JSON.stringify({ uuid: formattedUuid }) : undefined
+            body: action === 'add' ? JSON.stringify({ uuid: formattedUuid }) : undefined,
+            signal: controller.signal
         });
-
+        clearTimeout(timeout);
+        
         if (!response.ok) console.error(`Ошибка Whitelist Sync: ${response.status}`);
         return { success: response.ok };
     } catch (error) {
+        clearTimeout(timeout);
         console.error('Ошибка Whitelist Sync:', error);
         return { success: false };
     }
 }
 
-// ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ КОЛИЧЕСТВА ИГРОКОВ ==========
-
 async function getServerPlayers() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
     try {
-        const response = await fetch(`https://mcapi.us/server/status?ip=${MINECRAFT_SERVER_IP}&port=${MINECRAFT_SERVER_PORT}`);
-
+        const response = await fetch(`https://mcapi.us/server/status?ip=${MINECRAFT_SERVER_IP}&port=${MINECRAFT_SERVER_PORT}`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        
         if (!response.ok) {
             return { online: false, players: 0, maxPlayers: 0, error: "API недоступно" };
         }
-
+        
         const data = await response.json();
-
+        
         if (data.online) {
             return {
                 online: true,
@@ -205,12 +200,11 @@ async function getServerPlayers() {
             return { online: false, players: 0, maxPlayers: 0, error: "Сервер оффлайн" };
         }
     } catch (error) {
+        clearTimeout(timeout);
         console.error('Ошибка получения статуса сервера:', error.message);
         return { online: false, players: 0, maxPlayers: 0, error: "Ошибка подключения" };
     }
 }
-
-// ========== ФУНКЦИИ ДЛЯ ФАЙЛОВ ==========
 
 async function loadSettings() {
     try {
@@ -228,12 +222,12 @@ async function saveSettings() {
 }
 
 async function ensureWhitelistFile() {
-    try { await fs.access(WHITELIST_FILE); }
+    try { await fs.access(WHITELIST_FILE); } 
     catch { await fs.writeFile(WHITELIST_FILE, JSON.stringify([], null, 2)); }
 }
 
 async function ensureRulesFile() {
-    try { await fs.access(RULES_FILE); }
+    try { await fs.access(RULES_FILE); } 
     catch { await fs.writeFile(RULES_FILE, JSON.stringify(DEFAULT_RULES, null, 2)); }
 }
 
@@ -251,8 +245,6 @@ async function saveRules(rules) {
     } catch { return false; }
 }
 
-// ========== MIDDLEWARE ДЛЯ АДМИН-ПАНЕЛИ ==========
-
 const adminAuth = (req, res, next) => {
     const token = req.headers['authorization'];
     const session = activeSessions.get(token);
@@ -263,37 +255,39 @@ const adminAuth = (req, res, next) => {
     next();
 };
 
+// ========== HEALTHCHECK ДЛЯ БАЛАНСИРОВЩИКА TIMEWEB ==========
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', port: PORT, timestamp: new Date().toISOString() });
+});
+
 // ========== API ЭНДПОИНТЫ ==========
 
-// Логин
 app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
     if (username !== ADMIN_USERNAME) return res.status(401).json({ error: 'Неверный логин или пароль' });
-
-    const isValid = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    
+    const isValid = bcrypt.compareSync(password, ADMIN_PASSWORD_HASH);
     if (!isValid) return res.status(401).json({ error: 'Неверный логин или пароль' });
-
+    
     const newToken = generateToken();
     activeSessions.set(newToken, { createdAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-
-    // Очистка старых сессий
+    
     for (const [token, session] of activeSessions.entries()) {
         if (Date.now() > session.expiresAt) activeSessions.delete(token);
     }
-
+    
     res.json({ success: true, token: newToken });
 });
 
-// Выход
 app.post('/api/admin/logout', adminAuth, (req, res) => {
     const token = req.headers['authorization'];
     activeSessions.delete(token);
     res.json({ success: true });
 });
 
-// Настройки
 app.get('/api/admin/settings', adminAuth, async (req, res) => res.json(settings));
+
 app.post('/api/admin/settings', adminAuth, async (req, res) => {
     const { autoApproveEnabled, autoApproveRules, whitelistSyncEnabled, autoFetchUUID } = req.body;
     if (typeof autoApproveEnabled === 'boolean') settings.autoApproveEnabled = autoApproveEnabled;
@@ -304,13 +298,11 @@ app.post('/api/admin/settings', adminAuth, async (req, res) => {
     res.json({ success: true, settings });
 });
 
-// Статус сервера (реальное количество игроков)
 app.get('/api/server-status', async (req, res) => {
     const status = await getServerPlayers();
     res.json(status);
 });
 
-// Заявки
 app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
@@ -318,33 +310,53 @@ app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
-app.post('/api/whitelist', async (req, res) => {
-    const { username, reason, createExperience, discordTag } = req.body;
+app.get('/api/user/my-applications', async (req, res) => {
+    const userId = req.query.userId;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId required' });
+    }
+    
+    try {
+        const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
+        const allApplications = JSON.parse(data);
+        const myApplications = allApplications.filter(app => app.userId === userId);
+        res.json(myApplications);
+    } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
+});
 
+app.post('/api/whitelist', async (req, res) => {
+    const { username, reason, createExperience, discordTag, userId } = req.body;
+    
     if (!username || username.trim().length < 3) {
         return res.status(400).json({ error: 'Никнейм слишком короткий' });
     }
-
+    
     if (!discordTag || discordTag.trim().length === 0) {
         return res.status(400).json({ error: 'Введите ваш Discord ник' });
     }
-
+    
+    if (!userId) {
+        return res.status(400).json({ error: 'Ошибка идентификации пользователя' });
+    }
+    
     try {
         await ensureWhitelistFile();
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         let applications = JSON.parse(data);
-
-        if (applications.find(a => a.username.toLowerCase() === username.toLowerCase())) {
-            return res.status(400).json({ error: 'Заявка с таким ником уже существует' });
+        
+        const existing = applications.find(a => a.username.toLowerCase() === username.toLowerCase() && a.userId === userId);
+        if (existing) {
+            return res.status(400).json({ error: 'Вы уже отправляли заявку с этим ником' });
         }
-
+        
         let playerUUID = null;
         if (settings.autoFetchUUID) {
             playerUUID = await getUUIDFromMojang(username);
         }
-
+        
         const newApplication = {
             id: Date.now(),
+            userId: userId,
             username: username.trim(),
             uuid: playerUUID,
             reason: reason || '',
@@ -354,18 +366,18 @@ app.post('/api/whitelist', async (req, res) => {
             createdAt: new Date().toISOString(),
             autoApproved: settings.autoApproveEnabled
         };
-
+        
         applications.push(newApplication);
         await fs.writeFile(WHITELIST_FILE, JSON.stringify(applications, null, 2));
-
+        
         if (settings.autoApproveEnabled && settings.whitelistSyncEnabled && playerUUID) {
             await syncWithWhitelistSync(playerUUID, username, 'add');
         }
-
-        res.json({
-            success: true,
+        
+        res.json({ 
+            success: true, 
             message: settings.autoApproveEnabled ? '✅ Заявка одобрена! Добро пожаловать!' : '📝 Заявка отправлена на рассмотрение',
-            application: newApplication
+            application: newApplication 
         });
     } catch (error) {
         console.error(error);
@@ -376,22 +388,22 @@ app.post('/api/whitelist', async (req, res) => {
 app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
-
+    
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         let applications = JSON.parse(data);
         const index = applications.findIndex(a => a.id === parseInt(id));
         if (index === -1) return res.status(404).json({ error: 'Заявка не найдена' });
-
+        
         const oldStatus = applications[index].status;
         applications[index].status = status;
         applications[index].updatedAt = new Date().toISOString();
         await fs.writeFile(WHITELIST_FILE, JSON.stringify(applications, null, 2));
-
+        
         if (settings.whitelistSyncEnabled && oldStatus === 'pending' && status === 'approved' && applications[index].uuid) {
             await syncWithWhitelistSync(applications[index].uuid, applications[index].username, 'add');
         }
-
+        
         res.json({ success: true, application: applications[index] });
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
@@ -404,7 +416,7 @@ app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
         const deleted = applications.find(a => a.id === parseInt(id));
         const filtered = applications.filter(a => a.id !== parseInt(id));
         if (filtered.length === applications.length) return res.status(404).json({ error: 'Заявка не найдена' });
-
+        
         await fs.writeFile(WHITELIST_FILE, JSON.stringify(filtered, null, 2));
         if (settings.whitelistSyncEnabled && deleted?.status === 'approved' && deleted?.uuid) {
             await syncWithWhitelistSync(deleted.uuid, deleted.username, 'remove');
@@ -412,8 +424,6 @@ app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
         res.json({ success: true });
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
-
-// ========== ЭНДПОИНТЫ ДЛЯ ПРАВИЛ ==========
 
 app.get('/api/rules', async (req, res) => {
     try {
@@ -432,12 +442,12 @@ app.get('/api/admin/rules', adminAuth, async (req, res) => {
 app.put('/api/admin/rules/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { title, description, icon, section, number } = req.body;
-
+    
     try {
         let rules = await getRules();
         const index = rules.findIndex(r => r.id === parseInt(id));
         if (index === -1) return res.status(404).json({ error: 'Правило не найдено' });
-
+        
         rules[index] = { ...rules[index], title, description, icon, section, number };
         await saveRules(rules);
         res.json({ success: true, rule: rules[index] });
@@ -447,12 +457,12 @@ app.put('/api/admin/rules/:id', adminAuth, async (req, res) => {
 app.post('/api/admin/rules', adminAuth, async (req, res) => {
     const { title, description, icon, section, number } = req.body;
     if (!title || !description) return res.status(400).json({ error: 'Название и описание обязательны' });
-
+    
     try {
         let rules = await getRules();
         const newId = Math.max(...rules.map(r => r.id), 0) + 1;
         const newOrder = rules.length + 1;
-
+        
         const newRule = {
             id: newId,
             title,
@@ -462,7 +472,7 @@ app.post('/api/admin/rules', adminAuth, async (req, res) => {
             number: number || rules.filter(r => r.section === section).length + 1,
             order: newOrder
         };
-
+        
         rules.push(newRule);
         await saveRules(rules);
         res.json({ success: true, rule: newRule });
@@ -475,32 +485,20 @@ app.delete('/api/admin/rules/:id', adminAuth, async (req, res) => {
         let rules = await getRules();
         const filtered = rules.filter(r => r.id !== parseInt(id));
         if (filtered.length === rules.length) return res.status(404).json({ error: 'Правило не найдено' });
-
+        
         await saveRules(filtered);
         res.json({ success: true });
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
-// ========== РАЗДАЧА СТАТИКИ (FRONTEND) ==========
-// Эти строки позволяют серверу отдавать React-приложение
+// ========== ДИАГНОСТИКА ==========
+setInterval(() => {
+    const activeHandles = process._getActiveHandles().length;
+    const activeRequests = process._getActiveRequests().length;
+    console.log(`📊 Статус: handles: ${activeHandles}, requests: ${activeRequests}, порт: ${PORT}`);
+}, 30000);
 
-// Путь к собранному фронтенду (папка client/dist относительно корня проекта)
-const distPath = path.join(__dirname, '..', 'client', 'dist');
-
-// Раздаём статические файлы (CSS, JS, изображения)
-app.use(express.static(distPath));
-
-// Все остальные запросы (не /api/*) отдаём index.html
-// Это нужно для работы React Router
-app.get('*', (req, res) => {
-    // Пропускаем API запросы (они уже обработаны выше)
-    if (req.path.startsWith('/api')) {
-        return next();
-    }
-    res.sendFile(path.join(distPath, 'index.html'));
-});
-
-// ========== ЗАПУСК СЕРВЕРА ==========
+// ========== ЗАПУСК ==========
 
 async function init() {
     await loadSettings();
@@ -511,8 +509,15 @@ async function init() {
     console.log(`🔄 Whitelist Sync: ${settings.whitelistSyncEnabled ? 'ВКЛ' : 'ВЫК'}`);
     console.log(`🤖 Авто-одобрение: ${settings.autoApproveEnabled ? 'ВКЛ' : 'ВЫК'}`);
     console.log(`🎮 Minecraft сервер: ${MINECRAFT_SERVER_IP}:${MINECRAFT_SERVER_PORT}`);
-    console.log(`📁 Статика из: ${distPath}\n`);
+    console.log(`🏥 Healthcheck: http://${HOST}:${PORT}/health\n`);
 }
 
 init();
-app.listen(PORT, HOST);
+
+const server = app.listen(PORT, HOST, () => {
+    console.log(`✅ Сервер слушает на порту ${PORT}`);
+});
+
+// Критически важно для балансировщика Timeweb Cloud!
+server.keepAliveTimeout = 65000;      // 65 секунд
+server.headersTimeout = 66000;        // 66 секунд (должно быть больше keepAliveTimeout)
