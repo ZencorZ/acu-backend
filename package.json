@@ -5,6 +5,7 @@
   "description": "Backend for ACU Minecraft Server",
   "main": "index.js",
   "scripts": {
+    "build": "node index.js",
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
