@@ -4,7 +4,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import bcrypt from 'bcryptjs';  // ← ИЗМЕНЕНО на bcryptjs
+import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
@@ -15,8 +15,6 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
-
-// Доверие к прокси (для Timeweb)
 app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 3001;
@@ -40,6 +38,7 @@ const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
     message: { error: 'Слишком много запросов' },
+    trustProxy: true,
 });
 
 const loginLimiter = rateLimit({
@@ -52,7 +51,7 @@ app.use('/api/', limiter);
 app.use('/api/admin/login', loginLimiter);
 
 app.use(cors({
-    origin: ['https://zencorz-acu-fronend-7d6c.twc1.net', 'http://localhost:3000'],
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY'],
@@ -243,6 +242,7 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Логин админа
 app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
@@ -284,6 +284,9 @@ app.get('/api/server-status', async (req, res) => {
     res.json(status);
 });
 
+// ========== ЗАЯВКИ (с привязкой к пользователю) ==========
+
+// Получение ВСЕХ заявок (только для админа)
 app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
@@ -291,8 +294,24 @@ app.get('/api/admin/whitelist', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
+// Получение заявок конкретного пользователя
+app.get('/api/user/my-applications', async (req, res) => {
+    const userId = req.query.userId;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId required' });
+    }
+
+    try {
+        const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
+        const allApplications = JSON.parse(data);
+        const myApplications = allApplications.filter(app => app.userId === userId);
+        res.json(myApplications);
+    } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
+});
+
+// Отправка новой заявки
 app.post('/api/whitelist', async (req, res) => {
-    const { username, reason, createExperience, discordTag } = req.body;
+    const { username, reason, createExperience, discordTag, userId } = req.body;
 
     if (!username || username.trim().length < 3) {
         return res.status(400).json({ error: 'Никнейм слишком короткий' });
@@ -302,13 +321,19 @@ app.post('/api/whitelist', async (req, res) => {
         return res.status(400).json({ error: 'Введите ваш Discord ник' });
     }
 
+    if (!userId) {
+        return res.status(400).json({ error: 'Ошибка идентификации пользователя' });
+    }
+
     try {
         await ensureWhitelistFile();
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         let applications = JSON.parse(data);
 
-        if (applications.find(a => a.username.toLowerCase() === username.toLowerCase())) {
-            return res.status(400).json({ error: 'Заявка с таким ником уже существует' });
+        // Проверка на существующую заявку с таким же ником от ЭТОГО пользователя
+        const existing = applications.find(a => a.username.toLowerCase() === username.toLowerCase() && a.userId === userId);
+        if (existing) {
+            return res.status(400).json({ error: 'Вы уже отправляли заявку с этим ником' });
         }
 
         let playerUUID = null;
@@ -318,6 +343,7 @@ app.post('/api/whitelist', async (req, res) => {
 
         const newApplication = {
             id: Date.now(),
+            userId: userId,  // ← КЛЮЧЕВОЕ ПОЛЕ для привязки
             username: username.trim(),
             uuid: playerUUID,
             reason: reason || '',
@@ -346,6 +372,7 @@ app.post('/api/whitelist', async (req, res) => {
     }
 });
 
+// Обновление статуса заявки (админ)
 app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -369,6 +396,7 @@ app.put('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
 
+// Удаление заявки (админ)
 app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     try {
@@ -385,6 +413,8 @@ app.delete('/api/admin/whitelist/:id', adminAuth, async (req, res) => {
         res.json({ success: true });
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
+
+// ========== ПРАВИЛА ==========
 
 app.get('/api/rules', async (req, res) => {
     try {
