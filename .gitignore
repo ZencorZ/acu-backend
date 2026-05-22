@@ -1,3 +1,4 @@
 .env
 .vs
 /node-modules
+node_modules

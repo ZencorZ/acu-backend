@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "id": 1779461268953,
+    "userId": "68bc385c-cd5b-4ec7-b71e-f0d21c1c9ae8",
+    "username": "213123",
+    "uuid": "e0463f47-d035-4021-aced-1a63ebaa1bff",
+    "reason": "231312",
+    "createExperience": "Новичок",
+    "discordTag": "123123",
+    "status": "pending",
+    "createdAt": "2026-05-22T14:47:48.953Z",
+    "autoApproved": false
+  }
+]
