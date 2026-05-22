@@ -17,7 +17,7 @@ dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const HOST = '0.0.0.0';
 
 // ========== НАСТРОЙКИ БЕЗОПАСНОСТИ ==========
@@ -50,8 +50,25 @@ const loginLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/admin/login', loginLimiter);
 
+// ========== НАСТРОЙКИ CORS (важно для разных серверов) ==========
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://acucreate.ru',           // ваш фронтенд домен
+    'https://www.acucreate.ru',       // с www
+    'http://acucreate.ru',            // HTTP версия
+];
+
 app.use(cors({
-    origin: true,
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.warn(`❌ Блокирован запрос с origin: ${origin}`);
+            callback(new Error('Доступ запрещён политикой CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY'],
@@ -255,7 +272,7 @@ const adminAuth = (req, res, next) => {
     next();
 };
 
-// ========== HEALTHCHECK ДЛЯ БАЛАНСИРОВЩИКА TIMEWEB ==========
+// ========== HEALTHCHECK ==========
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', port: PORT, timestamp: new Date().toISOString() });
 });
@@ -518,6 +535,5 @@ const server = app.listen(PORT, HOST, () => {
     console.log(`✅ Сервер слушает на порту ${PORT}`);
 });
 
-// Критически важно для балансировщика Timeweb Cloud!
-server.keepAliveTimeout = 65000;      // 65 секунд
-server.headersTimeout = 66000;        // 66 секунд (должно быть больше keepAliveTimeout)
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
