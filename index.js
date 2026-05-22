@@ -18,7 +18,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 3001;
-const HOST = '92.51.39.109';
+const HOST = process.env.HOST || '0.0.0.0';
 
 // ========== НАСТРОЙКИ БЕЗОПАСНОСТИ ==========
 
