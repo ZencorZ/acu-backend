@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "id": 1779489440786,
+    "userId": "68bc385c-cd5b-4ec7-b71e-f0d21c1c9ae8",
+    "username": "sdcsad",
+    "uuid": null,
+    "reason": "asdas",
+    "createExperience": "Новичок",
+    "discordTag": "sadas",
+    "status": "pending",
+    "createdAt": "2026-05-22T22:37:20.786Z",
+    "autoApproved": false
+  }
+]

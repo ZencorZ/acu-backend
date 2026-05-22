@@ -47,8 +47,8 @@ const loginLimiter = rateLimit({
     message: { error: 'Слишком много попыток входа' },
 });
 
-app.use('/', limiter);
-app.use('/admin/login', loginLimiter);
+app.use('/api', limiter);
+app.use('/api/admin/login', loginLimiter);
 
 // ========== НАСТРОЙКИ CORS (важно для разных серверов) ==========
 const allowedOrigins = [
@@ -272,40 +272,43 @@ const adminAuth = (req, res, next) => {
     next();
 };
 
-// ========== HEALTHCHECK ==========
+// ========== API ЭНДПОИНТЫ ==========
+
+const apiRouter = express.Router();
+
+// Healthcheck (без префикса, для балансировщика)
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', port: PORT, timestamp: new Date().toISOString() });
 });
 
-// ========== API ЭНДПОИНТЫ ==========
-
-app.post('/admin/login', async (req, res) => {
+// Все API эндпоинты с префиксом /api
+apiRouter.post('/admin/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введите логин и пароль' });
     if (username !== ADMIN_USERNAME) return res.status(401).json({ error: 'Неверный логин или пароль' });
-    
+
     const isValid = bcrypt.compareSync(password, ADMIN_PASSWORD_HASH);
     if (!isValid) return res.status(401).json({ error: 'Неверный логин или пароль' });
-    
+
     const newToken = generateToken();
     activeSessions.set(newToken, { createdAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-    
+
     for (const [token, session] of activeSessions.entries()) {
         if (Date.now() > session.expiresAt) activeSessions.delete(token);
     }
-    
+
     res.json({ success: true, token: newToken });
 });
 
-app.post('/admin/logout', adminAuth, (req, res) => {
+apiRouter.post('/admin/logout', adminAuth, (req, res) => {
     const token = req.headers['authorization'];
     activeSessions.delete(token);
     res.json({ success: true });
 });
 
-app.get('/admin/settings', adminAuth, async (req, res) => res.json(settings));
+apiRouter.get('/admin/settings', adminAuth, async (req, res) => res.json(settings));
 
-app.post('/admin/settings', adminAuth, async (req, res) => {
+apiRouter.post('/admin/settings', adminAuth, async (req, res) => {
     const { autoApproveEnabled, autoApproveRules, whitelistSyncEnabled, autoFetchUUID } = req.body;
     if (typeof autoApproveEnabled === 'boolean') settings.autoApproveEnabled = autoApproveEnabled;
     if (typeof whitelistSyncEnabled === 'boolean') settings.whitelistSyncEnabled = whitelistSyncEnabled;
@@ -315,24 +318,24 @@ app.post('/admin/settings', adminAuth, async (req, res) => {
     res.json({ success: true, settings });
 });
 
-app.get('/server-status', async (req, res) => {
+apiRouter.get('/server-status', async (req, res) => {
     const status = await getServerPlayers();
     res.json(status);
 });
 
-app.get('/admin/whitelist', adminAuth, async (req, res) => {
+apiRouter.get('/admin/whitelist', adminAuth, async (req, res) => {
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         res.json(JSON.parse(data));
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
-app.get('/user/my-applications', async (req, res) => {
+apiRouter.get('/user/my-applications', async (req, res) => {
     const userId = req.query.userId;
     if (!userId) {
         return res.status(400).json({ error: 'userId required' });
     }
-    
+
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         const allApplications = JSON.parse(data);
@@ -341,36 +344,36 @@ app.get('/user/my-applications', async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка чтения' }); }
 });
 
-app.post('/whitelist', async (req, res) => {
+apiRouter.post('/whitelist', async (req, res) => {
     const { username, reason, createExperience, discordTag, userId } = req.body;
-    
+
     if (!username || username.trim().length < 3) {
         return res.status(400).json({ error: 'Никнейм слишком короткий' });
     }
-    
+
     if (!discordTag || discordTag.trim().length === 0) {
         return res.status(400).json({ error: 'Введите ваш Discord ник' });
     }
-    
+
     if (!userId) {
         return res.status(400).json({ error: 'Ошибка идентификации пользователя' });
     }
-    
+
     try {
         await ensureWhitelistFile();
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         let applications = JSON.parse(data);
-        
+
         const existing = applications.find(a => a.username.toLowerCase() === username.toLowerCase() && a.userId === userId);
         if (existing) {
             return res.status(400).json({ error: 'Вы уже отправляли заявку с этим ником' });
         }
-        
+
         let playerUUID = null;
         if (settings.autoFetchUUID) {
             playerUUID = await getUUIDFromMojang(username);
         }
-        
+
         const newApplication = {
             id: Date.now(),
             userId: userId,
@@ -383,18 +386,18 @@ app.post('/whitelist', async (req, res) => {
             createdAt: new Date().toISOString(),
             autoApproved: settings.autoApproveEnabled
         };
-        
+
         applications.push(newApplication);
         await fs.writeFile(WHITELIST_FILE, JSON.stringify(applications, null, 2));
-        
+
         if (settings.autoApproveEnabled && settings.whitelistSyncEnabled && playerUUID) {
             await syncWithWhitelistSync(playerUUID, username, 'add');
         }
-        
-        res.json({ 
-            success: true, 
+
+        res.json({
+            success: true,
             message: settings.autoApproveEnabled ? '✅ Заявка одобрена! Добро пожаловать!' : '📝 Заявка отправлена на рассмотрение',
-            application: newApplication 
+            application: newApplication
         });
     } catch (error) {
         console.error(error);
@@ -402,30 +405,30 @@ app.post('/whitelist', async (req, res) => {
     }
 });
 
-app.put('/admin/whitelist/:id', adminAuth, async (req, res) => {
+apiRouter.put('/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
-    
+
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
         let applications = JSON.parse(data);
         const index = applications.findIndex(a => a.id === parseInt(id));
         if (index === -1) return res.status(404).json({ error: 'Заявка не найдена' });
-        
+
         const oldStatus = applications[index].status;
         applications[index].status = status;
         applications[index].updatedAt = new Date().toISOString();
         await fs.writeFile(WHITELIST_FILE, JSON.stringify(applications, null, 2));
-        
+
         if (settings.whitelistSyncEnabled && oldStatus === 'pending' && status === 'approved' && applications[index].uuid) {
             await syncWithWhitelistSync(applications[index].uuid, applications[index].username, 'add');
         }
-        
+
         res.json({ success: true, application: applications[index] });
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
 
-app.delete('/admin/whitelist/:id', adminAuth, async (req, res) => {
+apiRouter.delete('/admin/whitelist/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     try {
         const data = await fs.readFile(WHITELIST_FILE, 'utf-8');
@@ -433,7 +436,7 @@ app.delete('/admin/whitelist/:id', adminAuth, async (req, res) => {
         const deleted = applications.find(a => a.id === parseInt(id));
         const filtered = applications.filter(a => a.id !== parseInt(id));
         if (filtered.length === applications.length) return res.status(404).json({ error: 'Заявка не найдена' });
-        
+
         await fs.writeFile(WHITELIST_FILE, JSON.stringify(filtered, null, 2));
         if (settings.whitelistSyncEnabled && deleted?.status === 'approved' && deleted?.uuid) {
             await syncWithWhitelistSync(deleted.uuid, deleted.username, 'remove');
@@ -442,44 +445,44 @@ app.delete('/admin/whitelist/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
-app.get('/rules', async (req, res) => {
+apiRouter.get('/rules', async (req, res) => {
     try {
         const rules = await getRules();
         res.json(rules.sort((a, b) => a.order - b.order));
     } catch { res.status(500).json({ error: 'Ошибка загрузки правил' }); }
 });
 
-app.get('/admin/rules', adminAuth, async (req, res) => {
+apiRouter.get('/admin/rules', adminAuth, async (req, res) => {
     try {
         const rules = await getRules();
         res.json(rules.sort((a, b) => a.order - b.order));
     } catch { res.status(500).json({ error: 'Ошибка загрузки правил' }); }
 });
 
-app.put('/admin/rules/:id', adminAuth, async (req, res) => {
+apiRouter.put('/admin/rules/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { title, description, icon, section, number } = req.body;
-    
+
     try {
         let rules = await getRules();
         const index = rules.findIndex(r => r.id === parseInt(id));
         if (index === -1) return res.status(404).json({ error: 'Правило не найдено' });
-        
+
         rules[index] = { ...rules[index], title, description, icon, section, number };
         await saveRules(rules);
         res.json({ success: true, rule: rules[index] });
     } catch { res.status(500).json({ error: 'Ошибка обновления' }); }
 });
 
-app.post('/admin/rules', adminAuth, async (req, res) => {
+apiRouter.post('/admin/rules', adminAuth, async (req, res) => {
     const { title, description, icon, section, number } = req.body;
     if (!title || !description) return res.status(400).json({ error: 'Название и описание обязательны' });
-    
+
     try {
         let rules = await getRules();
         const newId = Math.max(...rules.map(r => r.id), 0) + 1;
         const newOrder = rules.length + 1;
-        
+
         const newRule = {
             id: newId,
             title,
@@ -489,24 +492,27 @@ app.post('/admin/rules', adminAuth, async (req, res) => {
             number: number || rules.filter(r => r.section === section).length + 1,
             order: newOrder
         };
-        
+
         rules.push(newRule);
         await saveRules(rules);
         res.json({ success: true, rule: newRule });
     } catch { res.status(500).json({ error: 'Ошибка добавления' }); }
 });
 
-app.delete('/admin/rules/:id', adminAuth, async (req, res) => {
+apiRouter.delete('/admin/rules/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     try {
         let rules = await getRules();
         const filtered = rules.filter(r => r.id !== parseInt(id));
         if (filtered.length === rules.length) return res.status(404).json({ error: 'Правило не найдено' });
-        
+
         await saveRules(filtered);
         res.json({ success: true });
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
+
+// Подключаем все API маршруты с префиксом /api
+app.use('/api', apiRouter);
 
 // ========== ДИАГНОСТИКА ==========
 setInterval(() => {
