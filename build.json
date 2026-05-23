@@ -1,0 +1,28 @@
+{
+  "curseForgeUrl": "https://www.curseforge.com/minecraft/share/Me3REDu4",
+  "modrinthUrl": "https://modrinth.com/modpack/acucreate.ru",
+  "description": "Стабильная сборка на Create и аддонах: механизмы, поезда, автоматизация и инженерия без лагов.",
+  "version": "1.0.0",
+  "minecraftVersion": "1.20.1",
+  "forgeVersion": "21.1.228",
+  "mods": [
+    {
+      "id": 1,
+      "name": "Create",
+      "description": "Главный мод сборки — инженерное творчество",
+      "curseForgeUrl": "https://www.curseforge.com/minecraft/mc-mods/create",
+      "modrinthUrl": "https://modrinth.com/mod/create",
+      "icon": "⚙️",
+      "required": true
+    },
+    {
+      "id": 2,
+      "name": "JEI",
+      "description": "Просмотр рецептов",
+      "curseForgeUrl": "https://www.curseforge.com/minecraft/mc-mods/jei",
+      "modrinthUrl": "https://modrinth.com/mod/jei",
+      "icon": "📖",
+      "required": true
+    }
+  ]
+}

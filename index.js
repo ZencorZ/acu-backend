@@ -17,6 +17,8 @@ dotenv.config();
 const app = express();
 app.set('trust proxy', 1);
 
+const BUILD_FILE = path.join(__dirname, 'build.json');
+
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -103,6 +105,56 @@ let settings = {
     whitelistSyncEnabled: false,
     lastUpdated: new Date().toISOString()
 };
+
+// Настройки сборки по умолчанию
+const DEFAULT_BUILD = {
+    curseForgeUrl: 'https://www.curseforge.com/minecraft/modpacks/your-modpack',
+    modrinthUrl: 'https://modrinth.com/modpack/your-modpack',
+    description: 'Наша сборка включает лучшие моды для технического творчества!',
+    version: '1.0.0',
+    minecraftVersion: '1.20.1',
+    forgeVersion: '47.2.0',
+    mods: [
+        {
+            id: 1,
+            name: 'Create',
+            description: 'Главный мод сборки — инженерное творчество',
+            curseForgeUrl: 'https://www.curseforge.com/minecraft/mc-mods/create',
+            modrinthUrl: 'https://modrinth.com/mod/create',
+            icon: '⚙️',
+            required: true
+        },
+        {
+            id: 2,
+            name: 'JEI',
+            description: 'Просмотр рецептов',
+            curseForgeUrl: 'https://www.curseforge.com/minecraft/mc-mods/jei',
+            modrinthUrl: 'https://modrinth.com/mod/jei',
+            icon: '📖',
+            required: true
+        }
+    ]
+};
+
+// Функции для работы со сборкой
+async function ensureBuildFile() {
+    try { await fs.access(BUILD_FILE); }
+    catch { await fs.writeFile(BUILD_FILE, JSON.stringify(DEFAULT_BUILD, null, 2)); }
+}
+
+async function getBuild() {
+    try {
+        const data = await fs.readFile(BUILD_FILE, 'utf-8');
+        return JSON.parse(data);
+    } catch { return DEFAULT_BUILD; }
+}
+
+async function saveBuild(build) {
+    try {
+        await fs.writeFile(BUILD_FILE, JSON.stringify(build, null, 2));
+        return true;
+    } catch { return false; }
+}
 
 // ========== ПРАВИЛА ПО УМОЛЧАНИЮ ==========
 
@@ -511,6 +563,95 @@ apiRouter.delete('/admin/rules/:id', adminAuth, async (req, res) => {
     } catch { res.status(500).json({ error: 'Ошибка удаления' }); }
 });
 
+// Добавьте эндпоинты в конец API секции
+
+// Получение данных сборки (публичный)
+app.get('/api/build', async (req, res) => {
+    try {
+        const build = await getBuild();
+        res.json(build);
+    } catch { res.status(500).json({ error: 'Ошибка загрузки данных сборки' }); }
+});
+
+// Получение данных сборки для админа
+app.get('/api/admin/build', adminAuth, async (req, res) => {
+    try {
+        const build = await getBuild();
+        res.json(build);
+    } catch { res.status(500).json({ error: 'Ошибка загрузки данных сборки' }); }
+});
+
+// Обновление данных сборки
+app.put('/api/admin/build', adminAuth, async (req, res) => {
+    const { curseForgeUrl, modrinthUrl, description, version, minecraftVersion, forgeVersion } = req.body;
+
+    try {
+        let build = await getBuild();
+        build.curseForgeUrl = curseForgeUrl || build.curseForgeUrl;
+        build.modrinthUrl = modrinthUrl || build.modrinthUrl;
+        build.description = description || build.description;
+        build.version = version || build.version;
+        build.minecraftVersion = minecraftVersion || build.minecraftVersion;
+        build.forgeVersion = forgeVersion || build.forgeVersion;
+
+        await saveBuild(build);
+        res.json({ success: true, build });
+    } catch { res.status(500).json({ error: 'Ошибка сохранения' }); }
+});
+
+// Добавление мода
+app.post('/api/admin/build/mods', adminAuth, async (req, res) => {
+    const { name, description, curseForgeUrl, modrinthUrl, icon, required } = req.body;
+
+    if (!name) return res.status(400).json({ error: 'Название мода обязательно' });
+
+    try {
+        let build = await getBuild();
+        const newId = Math.max(...build.mods.map(m => m.id), 0) + 1;
+
+        build.mods.push({
+            id: newId,
+            name,
+            description: description || '',
+            curseForgeUrl: curseForgeUrl || '',
+            modrinthUrl: modrinthUrl || '',
+            icon: icon || '📦',
+            required: required || false
+        });
+
+        await saveBuild(build);
+        res.json({ success: true, mod: build.mods.find(m => m.id === newId) });
+    } catch { res.status(500).json({ error: 'Ошибка добавления мода' }); }
+});
+
+// Обновление мода
+app.put('/api/admin/build/mods/:id', adminAuth, async (req, res) => {
+    const { id } = req.params;
+    const { name, description, curseForgeUrl, modrinthUrl, icon, required } = req.body;
+
+    try {
+        let build = await getBuild();
+        const index = build.mods.findIndex(m => m.id === parseInt(id));
+        if (index === -1) return res.status(404).json({ error: 'Мод не найден' });
+
+        build.mods[index] = { ...build.mods[index], name, description, curseForgeUrl, modrinthUrl, icon, required };
+        await saveBuild(build);
+        res.json({ success: true, mod: build.mods[index] });
+    } catch { res.status(500).json({ error: 'Ошибка обновления мода' }); }
+});
+
+// Удаление мода
+app.delete('/api/admin/build/mods/:id', adminAuth, async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        let build = await getBuild();
+        build.mods = build.mods.filter(m => m.id !== parseInt(id));
+        await saveBuild(build);
+        res.json({ success: true });
+    } catch { res.status(500).json({ error: 'Ошибка удаления мода' }); }
+});
+
 // Подключаем все API маршруты с префиксом /api
 app.use('/api', apiRouter);
 
@@ -527,6 +668,7 @@ async function init() {
     await loadSettings();
     await ensureWhitelistFile();
     await ensureRulesFile();
+    await ensureBuildFile();
     console.log(`\n🚀 Сервер Association Create Units запущен на http://${HOST}:${PORT}`);
     console.log(`🔐 Админ: ${ADMIN_USERNAME || 'admin'}`);
     console.log(`🔄 Whitelist Sync: ${settings.whitelistSyncEnabled ? 'ВКЛ' : 'ВЫК'}`);

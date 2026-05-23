@@ -10,5 +10,17 @@
     "status": "pending",
     "createdAt": "2026-05-22T22:37:20.786Z",
     "autoApproved": false
+  },
+  {
+    "id": 1779490983721,
+    "userId": "68bc385c-cd5b-4ec7-b71e-f0d21c1c9ae8",
+    "username": "ZencorZ",
+    "uuid": "3a484d3f-ec84-4eb1-a67e-1e77198e5068",
+    "reason": "Я тут поиграть немного пришёл, в общем вот кароче да...",
+    "createExperience": "Новичок",
+    "discordTag": "ZencorZ",
+    "status": "pending",
+    "createdAt": "2026-05-22T23:03:03.721Z",
+    "autoApproved": false
   }
 ]
